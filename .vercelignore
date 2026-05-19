@@ -1,0 +1,7 @@
+node_modules
+.astro
+.git
+docs
+Firefly-docs
+*.md
+!README.md
