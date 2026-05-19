@@ -12,8 +12,11 @@ export const siteConfig: SiteConfig = {
 	// 站点副标题
 	subtitle: "Demo site",
 
-	// 站点 URL
-	site_url: "https://firefly.cuteleaf.cn",
+	// 站点 URL（GitHub Actions 部署时会用环境变量覆盖）
+	site_url:
+		typeof process !== "undefined" && process.env.SITE_URL
+			? process.env.SITE_URL
+			: "https://hualeide.github.io/firefly-blog/",
 
 	// 站点描述
 	description:

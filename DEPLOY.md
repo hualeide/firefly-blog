@@ -8,10 +8,15 @@
 - [x] **Vercel 已登录**（你的账号），项目名：`firefly-blog-lenovo`
 - [x] 本地预览可在 **http://localhost:4321** 打开（`npm run preview`）
 
-## 公开网址还差一步
+## 公网地址（GitHub Pages，自动部署）
 
-项目里自带大量演示文章和图片（约 **2GB**），用命令行直传 Vercel 会失败。  
-**正确做法：代码放 GitHub，让 Vercel 在云端构建**（只传源码，不传整个 dist）。
+推送 `main` 分支后，GitHub Actions 会在云端构建并发布：
+
+**https://hualeide.github.io/firefly-blog/**
+
+首次需在仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**。
+
+（Vercel 命令行上传易失败；已改用 GitHub Pages。）
 
 ### 你只要做这两步（约 3 分钟）
 

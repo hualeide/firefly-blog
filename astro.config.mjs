@@ -136,11 +136,14 @@ const astroIconInclude = {
 	mingcute: ["comment-line", "heartbeat-line"],
 };
 
+const siteUrl = process.env.SITE_URL || siteConfig.site_url;
+const basePath = process.env.BASE_PATH || "/";
+
 // https://astro.build/config
 export default defineConfig({
-	site: siteConfig.site_url,
-	
-	base: "/",
+	site: siteUrl,
+
+	base: basePath,
 	trailingSlash: "always",
 
 	// 图像优化配置
