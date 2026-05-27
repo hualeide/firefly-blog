@@ -5,12 +5,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import matter from "gray-matter";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const ALLOW_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"]);
 const GALLERY_CONFIG_MARKER = "\n\t],\n\n\t// 瀑布流最小列宽(px)";
 const ANNOUNCEMENT_CONFIG_PATH = path.join(projectRoot, "src", "config", "announcementConfig.ts");
+const SITE_CONFIG_PATH = path.join(projectRoot, "src", "config", "siteConfig.ts");
+const BACKGROUND_WALLPAPER_PATH = path.join(projectRoot, "src", "config", "backgroundWallpaper.ts");
 const POSTS_DIR = path.join(projectRoot, "src", "content", "posts");
 
 function json(data: unknown, status = 200): Response {
@@ -35,6 +38,266 @@ function replaceAnnouncementQuotedField(
 	}
 	const next = source.replace(re, (_, p1: string) => p1 + JSON.stringify(value));
 	return { ok: true, source: next };
+}
+
+function extractQuotedField(source: string, fieldName: string): string {
+	const re = new RegExp(`\\b${escapeRe(fieldName)}:\\s*"((?:\\\\.|[^"\\\\])*)"`, "m");
+	const m = source.match(re);
+	if (!m) return "";
+	try {
+		return JSON.parse(`"${m[1]}"`) as string;
+	} catch {
+		return m[1];
+	}
+}
+
+function replaceSiteConfigQuotedField(
+	source: string,
+	fieldName: string,
+	value: string,
+): { ok: true; source: string } | { ok: false; error: string } {
+	const re = new RegExp(`(\\b${escapeRe(fieldName)}:\\s*)"(?:\\\\.|[^"\\\\])*"`, "m");
+	if (!re.test(source)) {
+		return { ok: false, error: `在 siteConfig.ts 中未找到字段 ${fieldName}` };
+	}
+	const next = source.replace(re, (_, p1: string) => p1 + JSON.stringify(value));
+	return { ok: true, source: next };
+}
+
+function extractHomeBannerSubtitle(source: string): string[] {
+	const re = /\/\/ 主页横幅副标题\s*\r?\n\s*subtitle:\s*\[([\s\S]*?)\],/;
+	const m = source.match(re);
+	if (!m) return [];
+	const lines: string[] = [];
+	const itemRe = /"((?:\\.|[^"\\])*)"/g;
+	let im: RegExpExecArray | null;
+	while ((im = itemRe.exec(m[1])) !== null) {
+		try {
+			lines.push(JSON.parse(`"${im[1]}"`) as string);
+		} catch {
+			lines.push(im[1]);
+		}
+	}
+	return lines;
+}
+
+function replaceHomeBannerSubtitle(
+	source: string,
+	lines: string[],
+): { ok: true; source: string } | { ok: false; error: string } {
+	const re =
+		/(\/\/ 主页横幅副标题\s*\r?\n\s*subtitle:\s*)\[[\s\S]*?\](\s*,\s*\r?\n\s*\/\/ 主页横幅副标题字体大小)/;
+	if (!re.test(source)) {
+		return { ok: false, error: "在 backgroundWallpaper.ts 中未找到 homeText.subtitle 数组" };
+	}
+	const inner = lines.map((l) => `\t\t\t${JSON.stringify(l)},`).join("\n");
+	const next = source.replace(re, `$1[\n${inner}\n\t\t\t]$2`);
+	return { ok: true, source: next };
+}
+
+function extractHomeBannerTitle(source: string): string {
+	const re = /\/\/ 主页横幅主标题\s*\r?\n\s*title:\s*"((?:\\.|[^"\\])*)"/;
+	const m = source.match(re);
+	if (!m) return "";
+	try {
+		return JSON.parse(`"${m[1]}"`) as string;
+	} catch {
+		return m[1];
+	}
+}
+
+function replaceHomeBannerTitle(
+	source: string,
+	value: string,
+): { ok: true; source: string } | { ok: false; error: string } {
+	const re = /(\/\/ 主页横幅主标题\s*\r?\n\s*title:\s*)"[^"]*"/;
+	if (!re.test(source)) {
+		return { ok: false, error: "在 backgroundWallpaper.ts 中未找到 homeText.title" };
+	}
+	const next = source.replace(re, `$1${JSON.stringify(value)}`);
+	return { ok: true, source: next };
+}
+
+function formatPublishedForFrontmatter(value: string): string {
+	const v = String(value ?? "").trim();
+	if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+	const d = new Date(v);
+	if (Number.isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
+	return d.toISOString().slice(0, 10);
+}
+
+function handleContentOverview() {
+	const siteSrc = fs.readFileSync(SITE_CONFIG_PATH, "utf8");
+	const bgSrc = fs.readFileSync(BACKGROUND_WALLPAPER_PATH, "utf8");
+	const annSrc = fs.readFileSync(ANNOUNCEMENT_CONFIG_PATH, "utf8");
+	return {
+		ok: true as const,
+		types: {
+			announcement: {
+				label: "公告（侧栏）",
+				file: "src/config/announcementConfig.ts",
+				hint: "显示在侧栏公告组件，不是文章",
+			},
+			homepage: {
+				label: "主页（站点名 + 横幅字）",
+				files: ["src/config/siteConfig.ts", "src/config/backgroundWallpaper.ts"],
+				hint: "首页列表来自文章集合；此处改站点标题与顶部横幅文案",
+			},
+			posts: {
+				label: "文章（博客正文）",
+				dir: "src/content/posts/",
+				hint: "每篇对应 /posts/{slug}/，含 frontmatter + Markdown 正文",
+			},
+		},
+		announcement: {
+			title: extractQuotedField(annSrc, "title"),
+			content: extractQuotedField(annSrc, "content"),
+			linkText: extractQuotedField(annSrc, "text"),
+			linkUrl: extractQuotedField(annSrc, "url"),
+			closable: /\bclosable:\s*true\b/.test(annSrc),
+		},
+		homepage: {
+			siteTitle: extractQuotedField(siteSrc, "title"),
+			siteSubtitle: extractQuotedField(siteSrc, "subtitle"),
+			siteDescription: extractQuotedField(siteSrc, "description"),
+			bannerTitle: extractHomeBannerTitle(bgSrc),
+			bannerSubtitles: extractHomeBannerSubtitle(bgSrc),
+		},
+	};
+}
+
+function handleHomepageSave(body: Record<string, unknown>) {
+	if (!fs.existsSync(SITE_CONFIG_PATH) || !fs.existsSync(BACKGROUND_WALLPAPER_PATH)) {
+		return { ok: false as const, error: "缺少 siteConfig.ts 或 backgroundWallpaper.ts" };
+	}
+	let siteSrc = fs.readFileSync(SITE_CONFIG_PATH, "utf8");
+	let bgSrc = fs.readFileSync(BACKGROUND_WALLPAPER_PATH, "utf8");
+
+	const siteTitle = body.siteTitle != null ? String(body.siteTitle) : null;
+	const siteSubtitle = body.siteSubtitle != null ? String(body.siteSubtitle) : null;
+	const siteDescription = body.siteDescription != null ? String(body.siteDescription) : null;
+	const bannerTitle = body.bannerTitle != null ? String(body.bannerTitle) : null;
+	const bannerSubtitles = body.bannerSubtitles;
+
+	if (siteTitle !== null) {
+		const r = replaceSiteConfigQuotedField(siteSrc, "title", siteTitle);
+		if (!r.ok) return r;
+		siteSrc = r.source;
+	}
+	if (siteSubtitle !== null) {
+		const r = replaceSiteConfigQuotedField(siteSrc, "subtitle", siteSubtitle);
+		if (!r.ok) return r;
+		siteSrc = r.source;
+	}
+	if (siteDescription !== null) {
+		const r = replaceSiteConfigQuotedField(siteSrc, "description", siteDescription);
+		if (!r.ok) return r;
+		siteSrc = r.source;
+	}
+	if (bannerTitle !== null) {
+		const r = replaceHomeBannerTitle(bgSrc, bannerTitle);
+		if (!r.ok) return r;
+		bgSrc = r.source;
+	}
+	if (bannerSubtitles != null) {
+		const lines = Array.isArray(bannerSubtitles)
+			? bannerSubtitles.map((s) => String(s).trim()).filter(Boolean)
+			: String(bannerSubtitles)
+					.split(/\r?\n/)
+					.map((s) => s.trim())
+					.filter(Boolean);
+		const r = replaceHomeBannerSubtitle(bgSrc, lines);
+		if (!r.ok) return r;
+		bgSrc = r.source;
+	}
+
+	fs.writeFileSync(SITE_CONFIG_PATH, siteSrc, "utf8");
+	fs.writeFileSync(BACKGROUND_WALLPAPER_PATH, bgSrc, "utf8");
+	return {
+		ok: true as const,
+		message: "已保存主页相关配置（站点名 + 横幅）。刷新首页查看效果。",
+	};
+}
+
+function handlePostRead(url: URL) {
+	const rel = String(url.searchParams.get("path") ?? "").trim().replace(/\\/g, "/");
+	if (!rel) return { ok: false as const, error: "缺少 path 查询参数" };
+	const r = resolvePathUnderPosts(rel);
+	if (!r.ok) return r;
+	if (!fs.existsSync(r.absFile)) {
+		return { ok: false as const, error: "文件不存在" };
+	}
+	const raw = fs.readFileSync(r.absFile, "utf8");
+	const parsed = matter(raw);
+	const published = parsed.data.published;
+	let publishedStr = "";
+	if (published instanceof Date) {
+		publishedStr = published.toISOString().slice(0, 10);
+	} else if (published != null) {
+		publishedStr = String(published).slice(0, 10);
+	}
+	return {
+		ok: true as const,
+		path: rel,
+		raw,
+		data: {
+			title: String(parsed.data.title ?? ""),
+			published: publishedStr,
+			draft: Boolean(parsed.data.draft),
+			description: String(parsed.data.description ?? ""),
+			category: String(parsed.data.category ?? ""),
+			tags: Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [],
+			pinned: Boolean(parsed.data.pinned),
+		},
+		body: parsed.content,
+	};
+}
+
+function handlePostSave(body: Record<string, unknown>) {
+	const rel = String(body.path ?? "").trim().replace(/\\/g, "/");
+	if (!rel) return { ok: false as const, error: "缺少 path" };
+	const r = resolvePathUnderPosts(rel);
+	if (!r.ok) return r;
+	if (!fs.existsSync(r.absFile)) {
+		return { ok: false as const, error: "文件不存在" };
+	}
+
+	const title = String(body.title ?? "").trim();
+	if (!title) return { ok: false as const, error: "标题不能为空" };
+
+	const published = formatPublishedForFrontmatter(String(body.published ?? ""));
+	const draft = Boolean(body.draft);
+	const description = String(body.description ?? "");
+	const category = String(body.category ?? "");
+	const tags = Array.isArray(body.tags)
+		? body.tags.map((t) => String(t).trim()).filter(Boolean)
+		: String(body.tags ?? "")
+				.split(/[,，]/)
+				.map((s) => s.trim())
+				.filter(Boolean);
+	const pinned = Boolean(body.pinned);
+	const contentBody = String(body.body ?? "");
+
+	const existing = matter(fs.readFileSync(r.absFile, "utf8"));
+	const data: Record<string, unknown> = { ...(existing.data as Record<string, unknown>) };
+	data.title = title;
+	data.published = published;
+	data.draft = draft;
+	data.description = description;
+	data.category = category;
+	data.tags = tags;
+	data.pinned = pinned;
+	delete data.prevTitle;
+	delete data.prevSlug;
+	delete data.nextTitle;
+	delete data.nextSlug;
+
+	const out = matter.stringify(contentBody, data);
+	fs.writeFileSync(r.absFile, out, "utf8");
+	return {
+		ok: true as const,
+		message: `已保存 src/content/posts/${rel}`,
+	};
 }
 
 function handleGalleryCreateAlbum(body: Record<string, unknown>) {
@@ -289,6 +552,35 @@ function isOk(r: unknown): r is { ok: true } {
  */
 export async function handleFireflyDevRequest(request: Request, pathname: string): Promise<Response> {
 	try {
+		if (pathname === "/__firefly/content-overview" && request.method === "GET") {
+			return json(handleContentOverview());
+		}
+
+		if (pathname === "/__firefly/homepage-save" && request.method === "POST") {
+			const ct = request.headers.get("content-type") || "";
+			if (!ct.includes("application/json")) {
+				return json({ ok: false, error: "Content-Type 须为 application/json" }, 415);
+			}
+			const body = (await request.json()) as Record<string, unknown>;
+			const out = handleHomepageSave(body);
+			return json(out, isOk(out) ? 200 : 400);
+		}
+
+		if (pathname === "/__firefly/post-read" && request.method === "GET") {
+			const out = handlePostRead(new URL(request.url));
+			return json(out, isOk(out) ? 200 : 400);
+		}
+
+		if (pathname === "/__firefly/post-save" && request.method === "POST") {
+			const ct = request.headers.get("content-type") || "";
+			if (!ct.includes("application/json")) {
+				return json({ ok: false, error: "Content-Type 须为 application/json" }, 415);
+			}
+			const body = (await request.json()) as Record<string, unknown>;
+			const out = handlePostSave(body);
+			return json(out, isOk(out) ? 200 : 400);
+		}
+
 		if (pathname === "/__firefly/post-list" && request.method === "GET") {
 			return json(handlePostList());
 		}
